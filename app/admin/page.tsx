@@ -10,9 +10,9 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState(false);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const success = adminLogin(password);
+    const success = await adminLogin(password);
     if (success) {
       setLoginError(false);
       setPassword("");

@@ -51,7 +51,7 @@ export default function EditPostPage() {
     );
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !content.trim()) return;
 
@@ -60,16 +60,12 @@ export default function EditPostPage() {
       .map((t) => t.trim())
       .filter((t) => t !== "");
 
-    // Automatically estimate readTime: ~400 characters per minute
-    const estimatedReadTime = Math.max(1, Math.round(content.length / 400));
-
-    updatePost(post.id, {
+    await updatePost(post.id, {
       title,
       summary,
       category,
       tags,
       content,
-      readTime: estimatedReadTime,
       isPublished,
     });
 

@@ -2,75 +2,54 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { Post, Comment } from "../lib/blogTypes";
-import { initialPosts } from "../lib/mockData";
 
 interface BlogContextType {
   posts: Post[];
   isAdmin: boolean;
   theme: "light" | "dark" | "system";
   setTheme: (theme: "light" | "dark" | "system") => void;
-  adminLogin: (password: string) => boolean;
+  adminLogin: (password: string) => Promise<boolean>;
   adminLogout: () => void;
-  addPost: (post: Omit<Post, "id" | "views" | "likes" | "comments" | "createdAt">) => Post;
-  updatePost: (id: string, updatedFields: Partial<Post>) => void;
-  deletePost: (id: string) => void;
-  incrementViews: (id: string) => void;
-  addComment: (postId: string, author: string, content: string) => void;
+  addPost: (post: Omit<Post, "id" | "views" | "likes" | "comments" | "createdAt" | "readTime">) => Promise<Post | null>;
+  updatePost: (id: string, updatedFields: Partial<Post>) => Promise<void>;
+  deletePost: (id: string) => Promise<void>;
+  incrementViews: (id: string) => Promise<void>;
+  addComment: (postId: string, author: string, content: string) => Promise<void>;
 }
 
 const BlogContext = createContext<BlogContextType | undefined>(undefined);
+
+const API_BASE_URL = "http://127.0.0.1:8000";
 
 export function BlogProvider({ children }: { children: React.ReactNode }) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [theme, setThemeState] = useState<"light" | "dark" | "system">("system");
 
-  // Load from localStorage on mount
-  useEffect(() => {
-    const savedPosts = localStorage.getItem("blog_posts");
-    if (savedPosts) {
-      const parsed = JSON.parse(savedPosts) as Post[];
-      
-      // 1. Clean up stale/old dummy posts
-      let filtered = parsed.filter(
-        (p) => p.id !== "nextjs16-rsc" && 
-               p.id !== "spring-security-jwt" &&
-               p.id !== "springboot-intro-1" &&
-               p.id !== "springboot-intro-2" &&
-               p.id !== "springboot-intro-3"
-      );
-
-      // 2. Clean up duplicate H1 headers & fix broken LaTeX equations in cached content
-      filtered = filtered.map((p) => {
-        if (p.id === "ml-math-latex") {
-          const cleanModel = initialPosts.find((mock) => mock.id === "ml-math-latex");
-          if ((p.content.includes("$$") || p.content.includes("\\hat{y}")) && cleanModel) {
-            return { ...p, content: cleanModel.content };
-          }
-          const cleanedContent = p.content.replace(/^# 머신러닝 이해를 위한 기초 선형대수학 & 경사하강법 수학 공식\s*\n*/, "");
-          return { ...p, content: cleanedContent };
-        }
-        return p;
-      });
-
-      // 3. Inject new React vs NextJS comparison post if not in cache
-      const hasReactVsNext = filtered.some((p) => p.id === "react-vs-nextjs");
-      if (!hasReactVsNext) {
-        const reactVsNextPost = initialPosts.find((p) => p.id === "react-vs-nextjs");
-        if (reactVsNextPost) {
-          filtered.push(reactVsNextPost);
-        }
+  // Fetch all posts from FastAPI backend
+  const fetchPosts = async () => {
+    try {
+      // Fetch all posts (published and draft) for complete dashboard access
+      const res = await fetch(`${API_BASE_URL}/api/posts?published=false`);
+      if (res.ok) {
+        const data = await res.json();
+        setPosts(data);
       }
-
-      setPosts(filtered);
-      localStorage.setItem("blog_posts", JSON.stringify(filtered));
-    } else {
-      setPosts(initialPosts);
-      localStorage.setItem("blog_posts", JSON.stringify(initialPosts));
+    } catch (err) {
+      printError("Failed to fetch posts from backend:", err);
     }
+  };
 
-    const savedAdmin = localStorage.getItem("blog_admin");
-    if (savedAdmin === "true") {
+  const printError = (message: string, error: any) => {
+    console.error(message, error);
+  };
+
+  // Load configuration and data on mount
+  useEffect(() => {
+    fetchPosts();
+
+    const token = localStorage.getItem("blog_token");
+    if (token) {
       setIsAdmin(true);
     }
 
@@ -80,7 +59,7 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Theme effect
+  // Theme synchronization effect
   useEffect(() => {
     const root = window.document.documentElement;
     if (theme === "system") {
@@ -102,78 +81,163 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("blog_theme", newTheme);
   };
 
-  const adminLogin = (password: string): boolean => {
-    if (password === "admin1234") {
-      setIsAdmin(true);
-      localStorage.setItem("blog_admin", "true");
-      return true;
+  // Authenticate with FastAPI admin password validation
+  const adminLogin = async (password: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIsAdmin(true);
+        localStorage.setItem("blog_token", data.token || "token");
+        return true;
+      }
+    } catch (err) {
+      printError("Auth request failed:", err);
     }
     return false;
   };
 
   const adminLogout = () => {
     setIsAdmin(false);
-    localStorage.removeItem("blog_admin");
+    localStorage.removeItem("blog_token");
   };
 
-  const addPost = (postFields: Omit<Post, "id" | "views" | "likes" | "comments" | "createdAt">) => {
-    const today = new Date().toISOString().split("T")[0];
-    const newPost: Post = {
-      ...postFields,
-      id: postFields.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || `post-${Date.now()}`,
-      views: 0,
-      likes: 0,
-      comments: [],
-      createdAt: today,
-    };
+  // Add post directly to FastAPI database
+  const addPost = async (postFields: Omit<Post, "id" | "views" | "likes" | "comments" | "createdAt" | "readTime">): Promise<Post | null> => {
+    try {
+      const token = localStorage.getItem("blog_token");
+      const res = await fetch(`${API_BASE_URL}/api/posts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token || ""}`,
+        },
+        body: JSON.stringify({
+          ...postFields,
+          isPublished: true, // Default publish status
+        }),
+      });
 
-    const nextPosts = [newPost, ...posts];
-    setPosts(nextPosts);
-    localStorage.setItem("blog_posts", JSON.stringify(nextPosts));
-    return newPost;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.post) {
+          // Re-fetch database to sync frontend post list array
+          await fetchPosts();
+          return data.post;
+        }
+      }
+    } catch (err) {
+      printError("Failed to add post:", err);
+    }
+    return null;
   };
 
-  const updatePost = (id: string, updatedFields: Partial<Post>) => {
-    const nextPosts = posts.map((post) => (post.id === id ? { ...post, ...updatedFields } : post));
-    setPosts(nextPosts);
-    localStorage.setItem("blog_posts", JSON.stringify(nextPosts));
-  };
+  // Update existing post in FastAPI
+  const updatePost = async (id: string, updatedFields: Partial<Post>) => {
+    try {
+      const token = localStorage.getItem("blog_token");
+      
+      // Get the existing post object to prevent dropping fields
+      const currentPost = posts.find((p) => p.id === id);
+      if (!currentPost) return;
 
-  const deletePost = (id: string) => {
-    const nextPosts = posts.filter((post) => post.id !== id);
-    setPosts(nextPosts);
-    localStorage.setItem("blog_posts", JSON.stringify(nextPosts));
-  };
+      const merged = {
+        title: updatedFields.title ?? currentPost.title,
+        summary: updatedFields.summary ?? currentPost.summary,
+        content: updatedFields.content ?? currentPost.content,
+        category: updatedFields.category ?? currentPost.category,
+        tags: updatedFields.tags ?? currentPost.tags,
+        isPublished: updatedFields.isPublished ?? currentPost.isPublished,
+      };
 
-  const incrementViews = (id: string) => {
-    const viewedKey = `viewed_${id}`;
-    if (!sessionStorage.getItem(viewedKey)) {
-      const nextPosts = posts.map((post) =>
-        post.id === id ? { ...post, views: post.views + 1 } : post
-      );
-      setPosts(nextPosts);
-      localStorage.setItem("blog_posts", JSON.stringify(nextPosts));
-      sessionStorage.setItem(viewedKey, "true");
+      const res = await fetch(`${API_BASE_URL}/api/posts/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token || ""}`,
+        },
+        body: JSON.stringify(merged),
+      });
+
+      if (res.ok) {
+        await fetchPosts();
+      }
+    } catch (err) {
+      printError("Failed to update post:", err);
     }
   };
 
-  const addComment = (postId: string, author: string, content: string) => {
-    const newComment: Comment = {
-      id: `c-${Date.now()}`,
-      author,
-      content,
-      createdAt: new Date().toISOString().replace("T", " ").substring(0, 16),
-    };
+  // Delete post from FastAPI database
+  const deletePost = async (id: string) => {
+    try {
+      const token = localStorage.getItem("blog_token");
+      const res = await fetch(`${API_BASE_URL}/api/posts/${id}`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token || ""}`,
+        },
+      });
 
-    const nextPosts = posts.map((post) => {
-      if (post.id === postId) {
-        return { ...post, comments: [...post.comments, newComment] };
+      if (res.ok) {
+        await fetchPosts();
       }
-      return post;
-    });
+    } catch (err) {
+      printError("Failed to delete post:", err);
+    }
+  };
 
-    setPosts(nextPosts);
-    localStorage.setItem("blog_posts", JSON.stringify(nextPosts));
+  // Increment post views in database
+  const incrementViews = async (id: string) => {
+    const viewedKey = `viewed_${id}`;
+    if (!sessionStorage.getItem(viewedKey)) {
+      try {
+        // GET detail endpoint automatically increments views on the backend side
+        const res = await fetch(`${API_BASE_URL}/api/posts/${id}`);
+        if (res.ok) {
+          const updatedPost = await res.json();
+          // Update local state directly with returned server payload
+          setPosts((prev) => prev.map((p) => (p.id === id ? updatedPost : p)));
+          sessionStorage.setItem(viewedKey, "true");
+        }
+      } catch (err) {
+        printError("Failed to increment views:", err);
+      }
+    }
+  };
+
+  // Add comment to FastAPI database for a specific post
+  const addComment = async (postId: string, author: string, content: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/posts/${postId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author, content }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.comment) {
+          // Append new comment to client state post comments list
+          setPosts((prev) =>
+            prev.map((post) => {
+              if (post.id === postId) {
+                return {
+                  ...post,
+                  comments: [...post.comments, data.comment],
+                };
+              }
+              return post;
+            })
+          );
+        }
+      }
+    } catch (err) {
+      printError("Failed to submit comment:", err);
+    }
   };
 
   return (
@@ -199,7 +263,7 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
 
 export function useBlog() {
   const context = useContext(BlogContext);
-  if (!context) {
+  if (context === undefined) {
     throw new Error("useBlog must be used within a BlogProvider");
   }
   return context;
