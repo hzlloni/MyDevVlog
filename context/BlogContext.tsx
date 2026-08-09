@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { Post, Comment } from "../lib/blogTypes";
+import { supabase } from "../lib/supabaseClient";
 
 interface BlogContextType {
   posts: Post[];
@@ -19,37 +20,49 @@ interface BlogContextType {
 
 const BlogContext = createContext<BlogContextType | undefined>(undefined);
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-
 export function BlogProvider({ children }: { children: React.ReactNode }) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [theme, setThemeState] = useState<"light" | "dark" | "system">("system");
 
-  // Fetch all posts from FastAPI backend
-  const fetchPosts = async () => {
-    try {
-      // Fetch all posts (published and draft) for complete dashboard access
-      const res = await fetch(`${API_BASE_URL}/api/posts?published=false`);
-      if (res.ok) {
-        const data = await res.json();
-        setPosts(data);
-      }
-    } catch (err) {
-      printError("Failed to fetch posts from backend:", err);
-    }
-  };
-
   const printError = (message: string, error: any) => {
     console.error(message, error);
   };
 
-  // Load configuration and data on mount
+  // Fetch posts directly from Supabase Database
+  const fetchPosts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("posts")
+        .select(`
+          *,
+          comments (*)
+        `)
+        .order("createdAt", { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+        // Map postgres snake_case or date formats if necessary
+        const mappedPosts = data.map((p: any) => ({
+          ...p,
+          comments: p.comments || [],
+        })) as Post[];
+        setPosts(mappedPosts);
+      }
+    } catch (err) {
+      printError("Failed to fetch posts from Supabase:", err);
+    }
+  };
+
+  // On mount: fetch posts and load configuration
   useEffect(() => {
     fetchPosts();
 
-    const token = localStorage.getItem("blog_token");
-    if (token) {
+    const savedAdmin = localStorage.getItem("blog_admin");
+    if (savedAdmin === "true") {
       setIsAdmin(true);
     }
 
@@ -59,7 +72,7 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Theme synchronization effect
+  // Sync class-based dark mode
   useEffect(() => {
     const root = window.document.documentElement;
     if (theme === "system") {
@@ -81,165 +94,179 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("blog_theme", newTheme);
   };
 
-  // Authenticate with FastAPI admin password validation
+  // Simple admin session management
   const adminLogin = async (password: string): Promise<boolean> => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setIsAdmin(true);
-        localStorage.setItem("blog_token", data.token || "token");
-        return true;
-      }
-    } catch (err) {
-      printError("Auth request failed:", err);
+    if (password === "admin1234") {
+      setIsAdmin(true);
+      localStorage.setItem("blog_admin", "true");
+      return true;
     }
     return false;
   };
 
   const adminLogout = () => {
     setIsAdmin(false);
-    localStorage.removeItem("blog_token");
+    localStorage.removeItem("blog_admin");
   };
 
-  // Add post directly to FastAPI database
+  // Add post directly to Supabase table
   const addPost = async (postFields: Omit<Post, "id" | "views" | "likes" | "comments" | "createdAt" | "readTime">): Promise<Post | null> => {
     try {
-      const token = localStorage.getItem("blog_token");
-      const res = await fetch(`${API_BASE_URL}/api/posts`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token || ""}`,
-        },
-        body: JSON.stringify({
-          ...postFields,
-          isPublished: true, // Default publish status
-        }),
-      });
+      const slugId = postFields.title.toLowerCase().replace(/[^a-z0-9가-힣]+/g, "-").replace(/(^-|-$)/g, "") || `post-${Date.now()}`;
+      const today = new Date().toISOString().split("T")[0];
+      const estimatedReadTime = Math.max(1, Math.round(postFields.content.length / 400));
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.post) {
-          // Re-fetch database to sync frontend post list array
-          await fetchPosts();
-          return data.post;
-        }
+      const newPostPayload = {
+        id: slugId,
+        title: postFields.title,
+        summary: postFields.summary,
+        content: postFields.content,
+        category: postFields.category,
+        tags: postFields.tags,
+        createdAt: today,
+        views: 0,
+        likes: 0,
+        isPublished: postFields.isPublished,
+        readTime: estimatedReadTime,
+      };
+
+      const { data, error } = await supabase
+        .from("posts")
+        .insert([newPostPayload])
+        .select()
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+        await fetchPosts();
+        return { ...data, comments: [] } as Post;
       }
     } catch (err) {
-      printError("Failed to add post:", err);
+      printError("Failed to add post to Supabase:", err);
     }
     return null;
   };
 
-  // Update existing post in FastAPI
+  // Update existing post in Supabase table
   const updatePost = async (id: string, updatedFields: Partial<Post>) => {
     try {
-      const token = localStorage.getItem("blog_token");
-      
-      // Get the existing post object to prevent dropping fields
       const currentPost = posts.find((p) => p.id === id);
       if (!currentPost) return;
 
-      const merged = {
+      const estimatedReadTime = updatedFields.content 
+        ? Math.max(1, Math.round(updatedFields.content.length / 400)) 
+        : currentPost.readTime;
+
+      const payload = {
         title: updatedFields.title ?? currentPost.title,
         summary: updatedFields.summary ?? currentPost.summary,
         content: updatedFields.content ?? currentPost.content,
         category: updatedFields.category ?? currentPost.category,
         tags: updatedFields.tags ?? currentPost.tags,
         isPublished: updatedFields.isPublished ?? currentPost.isPublished,
+        readTime: estimatedReadTime,
       };
 
-      const res = await fetch(`${API_BASE_URL}/api/posts/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token || ""}`,
-        },
-        body: JSON.stringify(merged),
-      });
+      const { error } = await supabase
+        .from("posts")
+        .update(payload)
+        .eq("id", id);
 
-      if (res.ok) {
-        await fetchPosts();
+      if (error) {
+        throw error;
       }
+
+      await fetchPosts();
     } catch (err) {
-      printError("Failed to update post:", err);
+      printError("Failed to update post in Supabase:", err);
     }
   };
 
-  // Delete post from FastAPI database
+  // Delete post from Supabase
   const deletePost = async (id: string) => {
     try {
-      const token = localStorage.getItem("blog_token");
-      const res = await fetch(`${API_BASE_URL}/api/posts/${id}`, {
-        method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${token || ""}`,
-        },
-      });
+      const { error } = await supabase
+        .from("posts")
+        .delete()
+        .eq("id", id);
 
-      if (res.ok) {
-        await fetchPosts();
+      if (error) {
+        throw error;
       }
+
+      await fetchPosts();
     } catch (err) {
-      printError("Failed to delete post:", err);
+      printError("Failed to delete post from Supabase:", err);
     }
   };
 
-  // Increment post views in database
+  // Increment post views directly in Supabase table
   const incrementViews = async (id: string) => {
     const viewedKey = `viewed_${id}`;
     if (!sessionStorage.getItem(viewedKey)) {
       try {
-        // POST to the dedicated view increment endpoint
-        const res = await fetch(`${API_BASE_URL}/api/posts/${id}/view`, {
-          method: "POST"
-        });
-        if (res.ok) {
-          // Increment locally in current posts state array for instant feedback
-          setPosts((prev) =>
-            prev.map((p) => (p.id === id ? { ...p, views: p.views + 1 } : p))
-          );
-          sessionStorage.setItem(viewedKey, "true");
+        const currentPost = posts.find((p) => p.id === id);
+        if (!currentPost) return;
+
+        const { error } = await supabase
+          .from("posts")
+          .update({ views: currentPost.views + 1 })
+          .eq("id", id);
+
+        if (error) {
+          throw error;
         }
+
+        // Increment locally for instant UI update
+        setPosts((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, views: p.views + 1 } : p))
+        );
+        sessionStorage.setItem(viewedKey, "true");
       } catch (err) {
-        printError("Failed to increment views:", err);
+        printError("Failed to increment views in Supabase:", err);
       }
     }
   };
 
-  // Add comment to FastAPI database for a specific post
+  // Add comment to comments table in Supabase
   const addComment = async (postId: string, author: string, content: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/posts/${postId}/comments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author, content }),
-      });
+      const newCommentPayload = {
+        postId,
+        author,
+        content,
+        createdAt: new Date().toISOString().replace("T", " ").substring(0, 16),
+      };
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.comment) {
-          // Append new comment to client state post comments list
-          setPosts((prev) =>
-            prev.map((post) => {
-              if (post.id === postId) {
-                return {
-                  ...post,
-                  comments: [...post.comments, data.comment],
-                };
-              }
-              return post;
-            })
-          );
-        }
+      const { data, error } = await supabase
+        .from("comments")
+        .insert([newCommentPayload])
+        .select()
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+        // Append comment to local state array
+        setPosts((prev) =>
+          prev.map((post) => {
+            if (post.id === postId) {
+              return {
+                ...post,
+                comments: [...post.comments, data as Comment],
+              };
+            }
+            return post;
+          })
+        );
       }
     } catch (err) {
-      printError("Failed to submit comment:", err);
+      printError("Failed to add comment to Supabase:", err);
     }
   };
 
