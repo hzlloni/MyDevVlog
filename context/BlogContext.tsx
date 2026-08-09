@@ -27,6 +27,9 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
 
   const printError = (message: string, error: any) => {
     console.error(message, error);
+    if (error && typeof error === "object") {
+      console.error("🔍 Supabase Error Detail:", error.message || error.details || error.hint || JSON.stringify(error));
+    }
   };
 
   // Fetch posts directly from Supabase Database
