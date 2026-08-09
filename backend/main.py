@@ -83,11 +83,15 @@ def read_posts(published: bool = True, db: Session = Depends(get_db)):
 
 @app.get("/api/posts/{post_id}", response_model=schemas.Post)
 def read_post(post_id: str, db: Session = Depends(get_db)):
-    crud.increment_views(db, post_id)
     db_post = crud.get_post(db, post_id)
     if not db_post:
         raise HTTPException(status_code=404, detail="포스트를 찾을 수 없습니다.")
     return schemas.Post.model_validate(db_post)
+
+@app.post("/api/posts/{post_id}/view", response_model=schemas.GenericResponse)
+def view_post(post_id: str, db: Session = Depends(get_db)):
+    crud.increment_views(db, post_id)
+    return schemas.GenericResponse(success=True, message="조회수가 1 증가했습니다.")
 
 @app.post("/api/posts", response_model=schemas.CreatePostResponse, status_code=status.HTTP_201_CREATED)
 def create_new_post(post: schemas.PostCreate, db: Session = Depends(get_db)):

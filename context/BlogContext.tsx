@@ -195,12 +195,15 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     const viewedKey = `viewed_${id}`;
     if (!sessionStorage.getItem(viewedKey)) {
       try {
-        // GET detail endpoint automatically increments views on the backend side
-        const res = await fetch(`${API_BASE_URL}/api/posts/${id}`);
+        // POST to the dedicated view increment endpoint
+        const res = await fetch(`${API_BASE_URL}/api/posts/${id}/view`, {
+          method: "POST"
+        });
         if (res.ok) {
-          const updatedPost = await res.json();
-          // Update local state directly with returned server payload
-          setPosts((prev) => prev.map((p) => (p.id === id ? updatedPost : p)));
+          // Increment locally in current posts state array for instant feedback
+          setPosts((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, views: p.views + 1 } : p))
+          );
           sessionStorage.setItem(viewedKey, "true");
         }
       } catch (err) {
