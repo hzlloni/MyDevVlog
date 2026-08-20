@@ -1,57 +1,98 @@
-# 🛠️ MyDevVlog: 기술 스택 및 서버리스 아키텍처 명세서 (TECH_STACK.md)
+# 🛠️ MyDevVlog: 기술 스택 및 아키텍처 명세서 (FastAPI + Supabase DB)
 
-개발자 전혜원의 미니멀 기술 블로그 **MyDevVlog**의 구체적인 개발 기술 스택과 서버리스 백엔드 아키텍처 설계 사양서입니다.
+본 문서는 개발자 전혜원의 미니멀 기술 블로그 **MyDevVlog**의 최종 풀스택 아키텍처 설계 사양서입니다. 
+
+**FastAPI 백엔드 애플리케이션**과 **Supabase 클라우드 PostgreSQL 데이터베이스**를 결합하여 견고하고 확장성 있는 구조를 완성했습니다.
 
 ---
 
-## 🏗️ 1. 풀스택 서버리스 아키텍처 (Architecture Flow)
+## 🏗️ 1. 최종 풀스택 아키텍처 (Architecture Flow)
 
-기존 파이썬 서버 가동 및 호스팅 비용의 부담을 없애기 위해 Next.js의 서버리스 기능과 클라우드 DB를 유기적으로 결합한 **Vercel + Supabase 구조**를 채택했습니다.
+프론트엔드와 데이터베이스 사이에서 비즈니스 로직(조회수 제어, 데이터 연산, 파싱 등)을 안전하게 처리하기 위해 **파이썬 FastAPI 백엔드 서버**를 가동하고, 데이터 저장소로 글로벌 클라우드 서비스인 **Supabase PostgreSQL**을 결합했습니다.
 
 ```mermaid
-graph LR
-    Browser[브라우저 Client] -->|1. REST API 호출| Next_API[Vercel Serverless API /api/...]
-    Next_API -->|2. Server-side Query| Supabase_DB[(Supabase PostgreSQL)]
-    Browser -->|3. API 명세 스캔 및 테스트| Swagger[독립형 Swagger UI /swaggers]
+graph TD
+    Client[Next.js 프론트엔드]
+    
+    subgraph Local_or_Cloud_Server [FastAPI API Server]
+        FastAPI[FastAPI 백엔드 애플리케이션]
+        Swagger[공식 Swagger UI /docs]
+    end
+    
+    subgraph Supabase_Cloud [Database Cloud]
+        Supabase[(Supabase PostgreSQL)]
+    end
+    
+    Client -->|1. REST API 호출| FastAPI
+    Client -->|2. 블로그 렌더링| Client
+    FastAPI -->|3. ORM Query 연동| Supabase
+    Developer[개발자] -->|4. API 테스트 & 모니터링| Swagger
 ```
 
-### 🔐 보안 & 배포 최적화 설계
-* **보안성**: Supabase Project URL 및 Anon Key가 브라우저에 직접 노출되지 않고, Vercel의 서버 사이드 환경 변수를 통해서만 처리되도록 중개자(Proxy) API 단계를 설계했습니다.
-* **단일 호스팅**: 프론트엔드와 API 라우터가 Next.js 하나로 통합 배포되어 관리 비용이 $0이며, Git Push 시 Vercel Edge CDN을 통해 24시간 실시간 무중단 자동 갱신됩니다.
+### 🔒 이 아키텍처의 핵심 이점
+* **파이썬 백엔드(FastAPI) 생태계 학습**: 현대 파이썬 웹 개발 표준인 FastAPI의 라우팅 구조, CORS 설정, SQLAlchemy ORM 및 Pydantic 데이터 검증 흐름을 100% 로컬에서 가동 및 제어할 수 있습니다.
+* **클라우드 데이터 영속화 (Supabase PostgreSQL)**: 로컬 컴퓨터에 무겁게 PostgreSQL을 설치해 둘 필요 없이, Supabase가 제공하는 실시간 클라우드 PostgreSQL 커넥션을 주입하여 외부 배포 시에도 안정적으로 데이터를 누적합니다.
+* **오리지널 Swagger UI 탑재**: FastAPI 내부 엔진에 탑재된 공식 Swagger UI(`http://localhost:8000/docs`)를 별도 조립 과정 없이 즉시 띄워 API 동작 상태를 테스트할 수 있습니다.
 
 ---
 
 ## 📊 2. 세부 기술 스택 (Tech Stack Specification)
 
-| 레이어 | 기술 스택 | 설명 |
+| 레이어 | 기술 스택 | 세부 스펙 및 역할 |
 | :--- | :--- | :--- |
-| **Frontend** | `Next.js v16` | App Router 기반의 빠른 라우팅 및 최적화된 static/dynamic 빌드 |
-| | `TypeScript` | 엔티티 규격(Post, Comment 등)의 타입 안전성 및 컴파일 에러 사전 방어 |
-| | `Tailwind CSS v4` | 클래스 기반 다크/라이트 테마 제어 및 극적 미니멀리즘 디자인 레이아웃 |
-| | `Lucide React` | 모던 인터페이스용 벡터 아이콘 세트 |
-| **Serverless API** | `Next.js Route Handlers` | `/api/posts`, `/api/posts/[id]/view` 등 JSON 데이터 송수신 REST API 구축 |
-| **Database** | `Supabase (PostgreSQL)` | RLS(Row Level Security) 접근 제어 및 Cascade 관계형 테이블 보관 |
-| **API Docs** | `Swagger UI` | `/swaggers` 경로로 서빙되는 독립형 공식 API 대화형 명세 대시보드 |
+| **Frontend** | `Next.js v16` | App Router 기반의 고성능 SSR/CSR 렌더링 및 페이지 구성 |
+| | `TypeScript` | API 통신 DTO 타입 정의 및 정적 타입 에러 컴파일 예방 |
+| | `Tailwind CSS v4` | 클래스 기반 다크/라이트 모드 테마 제어 및 미니멀 UI 스타일링 |
+| **Backend** | `FastAPI` | 파이썬 비동기 웹 프레임워크를 활용한 REST API 백엔드 서버 구동 |
+| | `Uvicorn` | 초경량 ASGI 비동기 웹 서버 엔진 |
+| | `SQLAlchemy` | 파이썬 객체와 PostgreSQL 테이블을 유기적으로 이어주는 ORM |
+| | `Pydantic v2` | 데이터 입력 및 JSON 응답 형식 스키마 유효성 검증 |
+| **Database** | `Supabase (PostgreSQL)` | 클라우드 관계형 데이터베이스. 백엔드의 DB 연결 문자열(Connection String) 주입 |
+| **API Docs** | `FastAPI Swagger` | `http://localhost:8000/docs` 주소로 즉각 접속 가능한 백엔드 공식 문서 화면 |
 
 ---
 
-## 🔌 3. REST API 엔드포인트 세부 명세
+## 🔌 3. REST API 엔드포인트 목록
 
-* **`GET /api/posts`**: 전체 포스트 목록 반환 (쿼리 파라미터 `?published=false` 지원)
-* **`POST /api/posts`**: 새 글 생성 (자동 400자 기준 읽기 속도 `readTime` 및 slug ID 연산 처리)
-* **`GET /api/posts/{id}`**: 특정 포스트 상세 반환
-* **`PUT /api/posts/{id}`**: 포스트 정보 수정 (글 내용 변경 시 `readTime` 재연산)
-* **`DELETE /api/posts/{id}`**: 포스트 영구 삭제 (CASCADE 제약으로 매핑된 댓글 일괄 소멸)
-* **`POST /api/posts/{id}/view`**: 세션 감지 후 최초 1회만 조회수(`views`) 카운트업 실행
-* **`POST /api/posts/{id}/comments`**: 특정 포스트에 실시간 댓글 삽입
+모든 API 통신은 `http://localhost:8000` 주소 하위에 매핑되어 동작합니다.
+
+* **`/api/auth/login` [POST]**: 관리자 비밀번호 검증 및 어드민 임시 JWT 토큰 발급.
+* **`/api/posts` [GET / POST]**:
+  - `GET`: 게시물 전체 목록 조회 (카테고리 및 임시저장/발행 필터 지원).
+  - `POST`: 새로운 포스트 등록 (자동 슬러그 ID 및 글자 수 비례 읽기 시간 연산 처리).
+* **`/api/posts/{id}` [GET / PUT / DELETE]**:
+  - `GET`: 포스트 상세 단일 정보 조회.
+  - `PUT`: 포스트 정보 수정.
+  - `DELETE`: 포스트 영구 삭제 (CASCADE 제약으로 매핑된 댓글 일괄 자동 삭제).
+* **`/api/posts/{id}/view` [POST]**: 조회수 중복 방지 세션 필터를 거쳐 해당 포스트의 조회수(`views`)를 +1 증가.
+* **`/api/posts/{id}/comments` [POST]**: 특정 포스트에 실시간 댓글 등록.
 
 ---
 
-## 📁 4. 로컬 환경 설정 (.env.local 템플릿)
+## 🚀 4. 로컬 가동 및 Supabase 연동 방법
 
-개발 환경 구동 시 프로젝트 최상위에 아래 형식의 `.env.local` 파일을 생성하여 활성화합니다.
+### Step 1. Supabase PostgreSQL 주소 확인
+Supabase 대시보드 ➡️ **Settings ➡️ Database** 메뉴의 **`Connection string` (URI 탭)**에 적힌 주소를 복사해 둡니다:
+* **주소 예시**: `postgresql://postgres:[비밀번호]@[호스트명]:5432/postgres?sslmode=require`
 
-```text
-NEXT_PUBLIC_SUPABASE_URL=https://lgvpuepytluzzaagzmbw.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_AWifvZXuaTwyEf4BOVP_uw_Sn7UOYIo
+### Step 2. 백엔드 가상환경 설정 및 실행 (터미널 1)
+```bash
+cd minimal-blog
+# 파이썬 가상환경 켜기
+source ../venv/bin/activate
+# 패키지 드라이버 설치
+pip install -r backend/requirements.txt
+
+# Supabase 연결 주소를 환경 변수로 주입한 뒤 실행!
+export DATABASE_URL="postgresql://postgres:[비밀번호]@[호스트명]:5432/postgres?sslmode=require"
+python3 -m backend.main
 ```
+*(서버가 켜지면 Supabase 클라우드 상에 posts, comments 테이블을 자동으로 생성하고 초기 데이터를 주입합니다!)*
+
+### Step 3. 프론트엔드 Next.js 실행 (터미널 2)
+```bash
+cd minimal-blog
+# 로컬 개발 서버 기동 (기본적으로 localhost:8000의 FastAPI 백엔드와 자동 통신합니다)
+npm run dev
+```
+가동 후 브라우저에서 `http://localhost:3000` 으로 접속해 연동 상태를 확인합니다.

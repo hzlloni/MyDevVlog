@@ -46,11 +46,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
 
-  // Bypass entire blog layout for Swagger documentation to keep it full-screen and standalone
-  if (pathname === "/swaggers") {
-    return <>{children}</>;
-  }
-
   const navigation = [
     { name: "Home", href: "/" },
     { name: "Blog", href: "/posts" },

@@ -19,6 +19,8 @@ interface BlogContextType {
 
 const BlogContext = createContext<BlogContextType | undefined>(undefined);
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 export function BlogProvider({ children }: { children: React.ReactNode }) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -26,12 +28,15 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
 
   const printError = (message: string, error: any) => {
     console.error(message, error);
+    if (error && typeof error === "object") {
+      console.error("🔍 API Error Detail:", error.message || error.details || error.hint || JSON.stringify(error));
+    }
   };
 
-  // Fetch posts from local Next.js Route Handlers (which query Supabase on the server)
+  // Fetch all posts from the FastAPI backend server
   const fetchPosts = async () => {
     try {
-      const res = await fetch("/api/posts?published=false");
+      const res = await fetch(`${API_BASE_URL}/api/posts?published=false`);
       if (res.ok) {
         const data = await res.json();
         setPosts(data);
@@ -40,11 +45,11 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
         printError("Failed to fetch posts:", err);
       }
     } catch (err) {
-      printError("Failed to fetch posts from API:", err);
+      printError("Failed to fetch posts from FastAPI:", err);
     }
   };
 
-  // On mount: fetch posts and load settings
+  // Load configs on mount
   useEffect(() => {
     fetchPosts();
 
@@ -81,12 +86,23 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("blog_theme", newTheme);
   };
 
-  // Simple admin session management
+  // Admin login request targeting FastAPI endpoint
   const adminLogin = async (password: string): Promise<boolean> => {
-    if (password === "admin1234") {
-      setIsAdmin(true);
-      localStorage.setItem("blog_admin", "true");
-      return true;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIsAdmin(true);
+        localStorage.setItem("blog_admin", "true");
+        localStorage.setItem("blog_token", data.token || "token");
+        return true;
+      }
+    } catch (err) {
+      printError("Auth request failed:", err);
     }
     return false;
   };
@@ -94,15 +110,23 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
   const adminLogout = () => {
     setIsAdmin(false);
     localStorage.removeItem("blog_admin");
+    localStorage.removeItem("blog_token");
   };
 
-  // Add post via API route
+  // Add post directly to FastAPI database
   const addPost = async (postFields: Omit<Post, "id" | "views" | "likes" | "comments" | "createdAt" | "readTime">): Promise<Post | null> => {
     try {
-      const res = await fetch("/api/posts", {
+      const token = localStorage.getItem("blog_token");
+      const res = await fetch(`${API_BASE_URL}/api/posts`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(postFields),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token || ""}`,
+        },
+        body: JSON.stringify({
+          ...postFields,
+          isPublished: true,
+        }),
       });
 
       if (res.ok) {
@@ -116,14 +140,16 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
         printError("Failed to add post:", err);
       }
     } catch (err) {
-      printError("Failed to add post to API:", err);
+      printError("Failed to add post:", err);
     }
     return null;
   };
 
-  // Update post via API route
+  // Update existing post in FastAPI
   const updatePost = async (id: string, updatedFields: Partial<Post>) => {
     try {
+      const token = localStorage.getItem("blog_token");
+      
       const currentPost = posts.find((p) => p.id === id);
       if (!currentPost) return;
 
@@ -136,9 +162,12 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
         isPublished: updatedFields.isPublished ?? currentPost.isPublished,
       };
 
-      const res = await fetch(`/api/posts/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/posts/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token || ""}`,
+        },
         body: JSON.stringify(merged),
       });
 
@@ -149,15 +178,19 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
         printError("Failed to update post:", err);
       }
     } catch (err) {
-      printError("Failed to update post in API:", err);
+      printError("Failed to update post:", err);
     }
   };
 
-  // Delete post via API route
+  // Delete post from FastAPI database
   const deletePost = async (id: string) => {
     try {
-      const res = await fetch(`/api/posts/${id}`, {
+      const token = localStorage.getItem("blog_token");
+      const res = await fetch(`${API_BASE_URL}/api/posts/${id}`, {
         method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${token || ""}`,
+        },
       });
 
       if (res.ok) {
@@ -167,20 +200,20 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
         printError("Failed to delete post:", err);
       }
     } catch (err) {
-      printError("Failed to delete post from API:", err);
+      printError("Failed to delete post:", err);
     }
   };
 
-  // Increment view count via API route (controlled double-count prevention)
+  // Increment view count in database
   const incrementViews = async (id: string) => {
     const viewedKey = `viewed_${id}`;
     if (!sessionStorage.getItem(viewedKey)) {
       try {
-        const res = await fetch(`/api/posts/${id}/view`, {
+        const res = await fetch(`${API_BASE_URL}/api/posts/${id}/view`, {
           method: "POST",
         });
         if (res.ok) {
-          // Update locally for responsive UI update
+          // Increment locally for instant UI response
           setPosts((prev) =>
             prev.map((p) => (p.id === id ? { ...p, views: p.views + 1 } : p))
           );
@@ -192,10 +225,10 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Add comment via API route
+  // Add comment to FastAPI database for a specific post
   const addComment = async (postId: string, author: string, content: string) => {
     try {
-      const res = await fetch(`/api/posts/${postId}/comments`, {
+      const res = await fetch(`${API_BASE_URL}/api/posts/${postId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ author, content }),
@@ -210,7 +243,7 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
               if (post.id === postId) {
                 return {
                   ...post,
-                  comments: [...post.comments, data.comment as Comment],
+                  comments: [...post.comments, data.comment],
                 };
               }
               return post;
@@ -219,10 +252,10 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         const err = await res.json();
-        printError("Failed to add comment:", err);
+        printError("Failed to submit comment:", err);
       }
     } catch (err) {
-      printError("Failed to add comment in API:", err);
+      printError("Failed to submit comment:", err);
     }
   };
 

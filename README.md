@@ -22,14 +22,13 @@
 * **Icons**: `Lucide React`
 * **Markdown**: 커스텀 정규식 기반 마크다운 및 LaTeX 수학 공식 파서 탑재
 
-### 2) Backend & Database (Serverless)
-* **API Engine**: `Next.js Route Handlers (API Routes)` - Vercel Serverless Function으로 구동되는 REST API 구축
-* **PaaS**: `Supabase (PostgreSQL)` - 관계형 클라우드 데이터베이스
-* **API Docs**: `Swagger UI` - `/swaggers` 경로로 접속하는 독립형 실시간 API 테스트 대시보드
-* **Security**: 서버단 API 라우터를 거침으로써 Supabase Secret Key가 브라우저에 노출되지 않도록 이중 보안 적용
+### 2) Backend & Database
+* **API Engine**: `FastAPI (Python)` - 비동기 웹 프레임워크 기반의 REST API 백엔드 서버 가동
+* **Cloud Database**: `Supabase (PostgreSQL)` - 관계형 클라우드 데이터베이스 연동
+* **API Docs**: `FastAPI Swagger` - `http://localhost:8000/docs` 경로로 접속하는 백엔드 공식 대시보드
 
 ### 3) Infrastructure & Deployment
-* **Hosting**: `Vercel` - 전 세계 CDN 인프라를 통한 초고속 배포 및 환경 변수 통합 관리
+* **Hosting**: `Vercel` - Next.js 프론트엔드 배포 및 환경 변수 관리
 
 ---
 
