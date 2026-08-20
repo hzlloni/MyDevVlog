@@ -46,7 +46,7 @@ app = FastAPI(title="minimal-blog REST API Backend", version="1.0.0", lifespan=l
 # Setup CORS to allow Next.js frontend (localhost:3000) to communicate
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all origins for flexible local/cloud deployment
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
