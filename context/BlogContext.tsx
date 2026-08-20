@@ -2,7 +2,6 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { Post, Comment } from "../lib/blogTypes";
-import { supabase } from "../lib/supabaseClient";
 
 interface BlogContextType {
   posts: Post[];
@@ -27,40 +26,25 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
 
   const printError = (message: string, error: any) => {
     console.error(message, error);
-    if (error && typeof error === "object") {
-      console.error("🔍 Supabase Error Detail:", error.message || error.details || error.hint || JSON.stringify(error));
-    }
   };
 
-  // Fetch posts directly from Supabase Database
+  // Fetch posts from local Next.js Route Handlers (which query Supabase on the server)
   const fetchPosts = async () => {
     try {
-      const { data, error } = await supabase
-        .from("posts")
-        .select(`
-          *,
-          comments (*)
-        `)
-        .order("createdAt", { ascending: false });
-
-      if (error) {
-        throw error;
-      }
-
-      if (data) {
-        // Map postgres snake_case or date formats if necessary
-        const mappedPosts = data.map((p: any) => ({
-          ...p,
-          comments: p.comments || [],
-        })) as Post[];
-        setPosts(mappedPosts);
+      const res = await fetch("/api/posts?published=false");
+      if (res.ok) {
+        const data = await res.json();
+        setPosts(data);
+      } else {
+        const err = await res.json();
+        printError("Failed to fetch posts:", err);
       }
     } catch (err) {
-      printError("Failed to fetch posts from Supabase:", err);
+      printError("Failed to fetch posts from API:", err);
     }
   };
 
-  // On mount: fetch posts and load configuration
+  // On mount: fetch posts and load settings
   useEffect(() => {
     fetchPosts();
 
@@ -75,7 +59,7 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Sync class-based dark mode
+  // Sync dark theme class
   useEffect(() => {
     const root = window.document.documentElement;
     if (theme === "system") {
@@ -112,164 +96,133 @@ export function BlogProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("blog_admin");
   };
 
-  // Add post directly to Supabase table
+  // Add post via API route
   const addPost = async (postFields: Omit<Post, "id" | "views" | "likes" | "comments" | "createdAt" | "readTime">): Promise<Post | null> => {
     try {
-      const slugId = postFields.title.toLowerCase().replace(/[^a-z0-9가-힣]+/g, "-").replace(/(^-|-$)/g, "") || `post-${Date.now()}`;
-      const today = new Date().toISOString().split("T")[0];
-      const estimatedReadTime = Math.max(1, Math.round(postFields.content.length / 400));
+      const res = await fetch("/api/posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(postFields),
+      });
 
-      const newPostPayload = {
-        id: slugId,
-        title: postFields.title,
-        summary: postFields.summary,
-        content: postFields.content,
-        category: postFields.category,
-        tags: postFields.tags,
-        createdAt: today,
-        views: 0,
-        likes: 0,
-        isPublished: postFields.isPublished,
-        readTime: estimatedReadTime,
-      };
-
-      const { data, error } = await supabase
-        .from("posts")
-        .insert([newPostPayload])
-        .select()
-        .single();
-
-      if (error) {
-        throw error;
-      }
-
-      if (data) {
-        await fetchPosts();
-        return { ...data, comments: [] } as Post;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.post) {
+          await fetchPosts();
+          return data.post;
+        }
+      } else {
+        const err = await res.json();
+        printError("Failed to add post:", err);
       }
     } catch (err) {
-      printError("Failed to add post to Supabase:", err);
+      printError("Failed to add post to API:", err);
     }
     return null;
   };
 
-  // Update existing post in Supabase table
+  // Update post via API route
   const updatePost = async (id: string, updatedFields: Partial<Post>) => {
     try {
       const currentPost = posts.find((p) => p.id === id);
       if (!currentPost) return;
 
-      const estimatedReadTime = updatedFields.content 
-        ? Math.max(1, Math.round(updatedFields.content.length / 400)) 
-        : currentPost.readTime;
-
-      const payload = {
+      const merged = {
         title: updatedFields.title ?? currentPost.title,
         summary: updatedFields.summary ?? currentPost.summary,
         content: updatedFields.content ?? currentPost.content,
         category: updatedFields.category ?? currentPost.category,
         tags: updatedFields.tags ?? currentPost.tags,
         isPublished: updatedFields.isPublished ?? currentPost.isPublished,
-        readTime: estimatedReadTime,
       };
 
-      const { error } = await supabase
-        .from("posts")
-        .update(payload)
-        .eq("id", id);
+      const res = await fetch(`/api/posts/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(merged),
+      });
 
-      if (error) {
-        throw error;
+      if (res.ok) {
+        await fetchPosts();
+      } else {
+        const err = await res.json();
+        printError("Failed to update post:", err);
       }
-
-      await fetchPosts();
     } catch (err) {
-      printError("Failed to update post in Supabase:", err);
+      printError("Failed to update post in API:", err);
     }
   };
 
-  // Delete post from Supabase
+  // Delete post via API route
   const deletePost = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from("posts")
-        .delete()
-        .eq("id", id);
+      const res = await fetch(`/api/posts/${id}`, {
+        method: "DELETE",
+      });
 
-      if (error) {
-        throw error;
+      if (res.ok) {
+        await fetchPosts();
+      } else {
+        const err = await res.json();
+        printError("Failed to delete post:", err);
       }
-
-      await fetchPosts();
     } catch (err) {
-      printError("Failed to delete post from Supabase:", err);
+      printError("Failed to delete post from API:", err);
     }
   };
 
-  // Increment post views directly in Supabase table
+  // Increment view count via API route (controlled double-count prevention)
   const incrementViews = async (id: string) => {
     const viewedKey = `viewed_${id}`;
     if (!sessionStorage.getItem(viewedKey)) {
       try {
-        const currentPost = posts.find((p) => p.id === id);
-        if (!currentPost) return;
-
-        const { error } = await supabase
-          .from("posts")
-          .update({ views: currentPost.views + 1 })
-          .eq("id", id);
-
-        if (error) {
-          throw error;
+        const res = await fetch(`/api/posts/${id}/view`, {
+          method: "POST",
+        });
+        if (res.ok) {
+          // Update locally for responsive UI update
+          setPosts((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, views: p.views + 1 } : p))
+          );
+          sessionStorage.setItem(viewedKey, "true");
         }
-
-        // Increment locally for instant UI update
-        setPosts((prev) =>
-          prev.map((p) => (p.id === id ? { ...p, views: p.views + 1 } : p))
-        );
-        sessionStorage.setItem(viewedKey, "true");
       } catch (err) {
-        printError("Failed to increment views in Supabase:", err);
+        printError("Failed to increment views:", err);
       }
     }
   };
 
-  // Add comment to comments table in Supabase
+  // Add comment via API route
   const addComment = async (postId: string, author: string, content: string) => {
     try {
-      const newCommentPayload = {
-        postId,
-        author,
-        content,
-        createdAt: new Date().toISOString().replace("T", " ").substring(0, 16),
-      };
+      const res = await fetch(`/api/posts/${postId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ author, content }),
+      });
 
-      const { data, error } = await supabase
-        .from("comments")
-        .insert([newCommentPayload])
-        .select()
-        .single();
-
-      if (error) {
-        throw error;
-      }
-
-      if (data) {
-        // Append comment to local state array
-        setPosts((prev) =>
-          prev.map((post) => {
-            if (post.id === postId) {
-              return {
-                ...post,
-                comments: [...post.comments, data as Comment],
-              };
-            }
-            return post;
-          })
-        );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.comment) {
+          // Append locally
+          setPosts((prev) =>
+            prev.map((post) => {
+              if (post.id === postId) {
+                return {
+                  ...post,
+                  comments: [...post.comments, data.comment as Comment],
+                };
+              }
+              return post;
+            })
+          );
+        }
+      } else {
+        const err = await res.json();
+        printError("Failed to add comment:", err);
       }
     } catch (err) {
-      printError("Failed to add comment to Supabase:", err);
+      printError("Failed to add comment in API:", err);
     }
   };
 
